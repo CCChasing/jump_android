@@ -1,21 +1,51 @@
+/// **Author**: wwyang
+/// **Date**: 2025.5.2
+/// **Copyright**: Multimedia Lab, Zhejiang Gongshang University
+/// **Version**: 1.0
+///
+/// This program is free software: you can redistribute it and/or modify
+/// it under the terms of the GNU General Public License as published by
+/// the Free Software Foundation, either version 3 of the License, or
+/// (at your option) any later version).
+///
+/// This program is distributed in the hope that it will be useful,
+/// but WITHOUT ANY WARRANTY; without even the implied warranty of
+/// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+/// GNU General Public License for more details.
+///
+/// You should have received a copy of the GNU General Public License
+/// along with this program. If not, see <http://www.gnu.org/licenses/>.
 library video_stream_capture_lib;
 
 import 'dart:typed_data';
 import 'dart:async';
 import 'dart:core';
-import 'package:camera/camera.dart'; // <-- 导入 camera 插件
-import 'dart:ui' as ui; // 用于 ImageByteFormat，如果需要转换为 RGB 格式
-import 'dart:typed_data'; // 用于 Uint8List
+import 'package:camera/camera.dart'; // Import the camera plugin for CameraController and CameraImage
+import 'dart:ui' as ui;
 
-part 'video_stream_capture_from_camera.dart'; // 关联子类文件
+import '../scene_repository/base_repository.dart'; // Import dart:ui, if ImageByteFormat etc. are needed in part files
 
-abstract class VideoStreamCapture {
+part 'video_stream_capture_from_camera.dart'; // Associate with the subclass file
+
+/// ## VideoSteramCapture
+///
+/// ### Superclass of the Video Data Stream Generator
+///
+/// This class is used for generating the data stream. It provides an interface for fetching data from the
+/// stream, while the data generation is handled internally, i.e., oblivious to the outer.
+///
+/// **Note**: The data in the stream is assumed to be an image.
+///
+/// The data stream can be from various sources such as a video sequence, camera, and others. A new class should
+/// be derived for each source where the data generation is re-implemented.
+///
+abstract class VideoStreamCapture implements BaseRepository { // Implement BaseRepository interface
   /// Represents frame data with a timestamp, current frame data, and a flag indicating if it's new.
   ///
   /// - [timestamp] is an integer representing the timestamp of the frame.
-  /// - [curFrameData] is an [VideoFrameData] representing the current frame data.
+  /// - [curFrameData] is an [CameraImage] representing the current frame data.
   /// - [bNewData] is a boolean indicating whether the data is new and has not been fetched.
-  ({int timestamp, VideoFrameData? curFrameData, bool isNewData}) _curFrameData =
+  ({int timestamp, CameraImage? curFrameData, bool isNewData}) _curFrameData =
   (timestamp: 0, curFrameData: null, isNewData: false);
 
   /// Frame rate of the video stream
@@ -33,6 +63,10 @@ abstract class VideoStreamCapture {
 
   /// Gets whether is the steram is currently running.
   bool get isRunning => _isRunning;
+
+  /// Gets the CameraController instance if available.
+  /// This is an abstract getter that concrete implementations (like VideoStreamCaptureFromCamera) must provide.
+  CameraController? get cameraController;
 
   /// Starts the data stream and returns if successful.
   ///
@@ -60,7 +94,9 @@ abstract class VideoStreamCapture {
   }
 
   /// stop the data stream
-  Future<void> stop() async{
+  /// This method is also the implementation of freeRepository from BaseRepository
+  @override
+  Future<void> freeRepository() async{ // Implement freeRepository method
     if(!_isRunning) return;
 
     await _stopImplement(); // Do something for stopping the dtream
@@ -79,15 +115,17 @@ abstract class VideoStreamCapture {
     // Set up a timer to fetch data at the specified FPS
     _timer = Timer.periodic(Duration(milliseconds: (1000 / fps).round()), (Timer timer) {
       try {
-        // 1. Try to fetch a new data from the updated current data repository
-        TimestampHolder timestamp = TimestampHolder(0);
-        VideoFrameData imageData = VideoFrameData(bytes: Uint8List(0), width: 0, height: 0);
-        if(_fetchCurrentData(timestamp, imageData)){ // Obtain a new data
-          callback(timestamp.timestamp, imageData);
+        final CameraImage? imageData = _fetchCurrentData(); // Get data directly
+        if (imageData != null) { // Check for null before calling callback
+          callback(_curFrameData.timestamp, imageData); // Pass the retrieved image
         }
       } catch (e) {
         print('Error fetching data: $e');
-        stop();
+        // Only cancel the timer here, do not call freeRepository()
+        // freeRepository() should be called from the widget's dispose method.
+        _timer?.cancel(); // Stop the timer
+        _isRunning = false; // Mark as not running
+        print('VideoStreamCapture: Timer stopped due to error.');
       }
     });
   }
@@ -96,24 +134,19 @@ abstract class VideoStreamCapture {
   ///
   /// This method should be implemented depending on the specified data source
   /// return true if current stream data is available; otherwise false
-  bool _fetchCurrentData(TimestampHolder timestamp, VideoFrameData imageData) {
-    if(!_isRunning) return false;
-    if(!_curFrameData.isNewData){
-      _readCurrentDataAsyn(); // read the next data from the source stream: it's a asyn function but we don't wait for it
+  CameraImage? _fetchCurrentData() { // Changed return type to CameraImage? and removed parameters
+    if(!_isRunning) return null;
 
-      return false;
+    if(_curFrameData.isNewData && _curFrameData.curFrameData != null){ // Check for null before using !
+      final CameraImage imageToReturn = _curFrameData.curFrameData!;
+      _curFrameData = (timestamp: _curFrameData.timestamp, curFrameData: null, isNewData: false); // Mark as consumed
+      _readCurrentDataAsyn(); // Request next frame
+      return imageToReturn;
     }
     else{
-      timestamp.timestamp = _curFrameData.timestamp;
-      imageData.bytes = _curFrameData.curFrameData!.bytes;
-      imageData.width = _curFrameData.curFrameData!.width;
-      imageData.height = _curFrameData.curFrameData!.height;
-
-      _curFrameData = (timestamp: timestamp.timestamp, curFrameData: null, isNewData: false); // has been fetched
-      _readCurrentDataAsyn(); // read the next data from the source stream: it's a asyn function but we don't wait for it
+      _readCurrentDataAsyn(); // Request next frame, no new data to return yet
+      return null;
     }
-
-    return true;
   }
 
   /// {@template start_implement}
@@ -149,10 +182,11 @@ class TimestampHolder {
   /// - [timestamp] is the initial timestamp value.
   TimestampHolder(this.timestamp);
 }
-typedef FetchDataCallback = void Function(int timestamp, VideoFrameData imageData);
+typedef FetchDataCallback = void Function(int timestamp, CameraImage imageData);
 
 
 /// Represents image data fetched from the data stream.
+/// This class is no longer directly used for CameraImage data, but might be useful for other stream types.
 class VideoFrameData {
   Uint8List bytes;
   int width;

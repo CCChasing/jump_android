@@ -17,13 +17,13 @@
 /// along with this program. If not, see <http://www.gnu.org/licenses/>.
 library repository_lib;
 
-import 'repository_factory.dart';
-
 abstract class BaseRepository {
 
   BaseRepository(){
-    RepositoryFactory.addToFactory_(this);
+
   }
 
+  /// 抽象方法：释放当前数据仓库所持有的资源。
+  /// 所有实现 BaseRepository 的具体仓库类都必须实现此方法。
   Future<void> freeRepository();
 }

@@ -1,6 +1,47 @@
+// ignore: use_string_in_part_of_directives
+/// **Author**: wwyang
+/// **Date**: 2025.5.2
+/// **Copyright**: Multimedia Lab, Zhejiang Gongshang University
+/// **Version**: 1.0
+///
+/// This program is free software: you can redistribute it and/or modify
+/// it under the terms of the GNU General Public License as published by
+/// the Free Software Foundation, either version 3 of the License, or
+/// (at your option) any later version).
+///
+/// This program is distributed in the hope that it will be useful,
+/// but WITHOUT ANY WARRANTY; without even the implied warranty of
+/// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+/// GNU General Public License for more details.
+///
+/// You should have received a copy of the GNU General Public License
+/// along with this program. If not, see <http://www.gnu.org/licenses/>.
+part of video_stream_capture_lib; // Note: Only 'part of' directive here
 
-part of video_stream_capture_lib;
-
+/// ## VideoStreamCaptureFromCamera
+///
+/// ### Instanceclass of the Video Data Stream Generator
+///
+/// This class is used for generating the data stream from a camera. This version is for mobile application
+///
+/// Example usage:
+///
+/// ```dart
+/// // Create a camera data capturer with the frame size [800, 600]
+/// VideoStreamCaptureFromCamera captureCamera = VideoStreamCaptureFromCamera(width: 800, height: 600);
+///
+/// bool isStart = false;
+/// CameraImage curFrameData; // Changed to CameraImage
+/// try{
+///    // Begin to capture the camera data by 25 FPS
+///    isStart = await captureCamera.start((int timestamp, CameraImage frameData) { // Changed to CameraImage
+///         // Obtain and process the per-frame data
+///         curFrameData = frameData;
+///    }, fps: 25);
+///  }catch(e){
+///    print('Errors occur when opening the camera video stream');
+///  }
+/// ```
 class VideoStreamCaptureFromCamera extends VideoStreamCapture {
   /// Frame's size
   int _width = 800, _height = 600;
@@ -12,6 +53,11 @@ class VideoStreamCaptureFromCamera extends VideoStreamCapture {
   VideoStreamCaptureFromCamera({int width = 800, int height = 600})
       : _width = width,
         _height = height;
+
+  /// Provides access to the internal CameraController instance.
+  /// This is required by the abstract VideoStreamCapture class.
+  @override
+  CameraController? get cameraController => _cameraController;
 
   /// {@macro start_implement}
   @override
@@ -28,17 +74,17 @@ class VideoStreamCaptureFromCamera extends VideoStreamCapture {
         print('No cameras available.');
         return false;
       }
-      // 通常选择第一个后置摄像头
+      // Usually select the first back camera
       final CameraDescription cameraDescription = cameras.first;
 
       // 3. Initialize CameraController
-      // 根据你的需求选择分辨率和图像格式
-      // 注意：camera 插件通常提供 YUV420_888 格式的图像数据，可能需要自行转换到 RGB
+      // Select resolution and image format based on your needs
+      // Note: The camera plugin usually provides YUV420_888 format image data, which may need to be converted to RGB
       _cameraController = CameraController(
         cameraDescription,
-        ResolutionPreset.medium, // 或 .high, .max, 根据需要调整
-        enableAudio: false, // 摄像头视频流通常不需要音频
-        imageFormatGroup: ImageFormatGroup.yuv420, // 获取 YUV 格式数据
+        ResolutionPreset.medium, // Or .high, .max, adjust as needed
+        enableAudio: false, // Camera video stream usually does not require audio
+        imageFormatGroup: ImageFormatGroup.yuv420, // Get YUV format data
       );
 
       await _cameraController!.initialize();
@@ -48,34 +94,18 @@ class VideoStreamCaptureFromCamera extends VideoStreamCapture {
         return false;
       }
 
-      // 获取实际的视频尺寸
+      // Get actual video dimensions
       _width = _cameraController!.value.previewSize?.width.toInt() ?? _width;
       _height = _cameraController!.value.previewSize?.height.toInt() ?? _height;
 
       // 4. Start image stream
-      // 监听图像数据流，每当有新帧可用时，将其存入 _curFrameData
+      // Listen to the image data stream, and store it in _curFrameData whenever a new frame is available
       _cameraController!.startImageStream((CameraImage image) {
-        // 只有当上一次的数据被读取后，才更新新数据，避免数据覆盖
+        // Only update new data when the previous data has been read, to avoid data overwrite
         if (!_curFrameData.isNewData) {
-          // 这里需要处理 CameraImage 到 VideoFrameData 的转换
-          // CameraImage 通常是 YUV 格式，如果需要 RGB，这里需要进行转换。
-          // 简化的处理：直接将 YUV 数据的第一个 plane 的 bytes 作为图像数据
-          final Uint8List bytes = image.planes[0].bytes;
-          final int width = image.width;
-          final int height = image.height;
-
-          // TODO: 如果需要 RGB 数据，这里需要实现 YUV 到 RGB 的转换
-          // 可以考虑使用第三方库如 `image` 或 `image_converter`
-          // 例如：
-          // final img.Image? rgbImage = convertYUV420toRGBA(image);
-          // if (rgbImage != null) {
-          //    final Uint8List rgbBytes = Uint8List.fromList(img.encodePng(rgbImage));
-          //    _curFrameData = (timestamp: _curFrameData.timestamp + 1, curFrameData: VideoFrameData(bytes: rgbBytes, width: width, height: height), isNewData: true);
-          // }
-
           _curFrameData = (
           timestamp: _curFrameData.timestamp + 1,
-          curFrameData: VideoFrameData(bytes: bytes, width: width, height: height),
+          curFrameData: image, // Store CameraImage directly
           isNewData: true,
           );
         }
@@ -105,10 +135,10 @@ class VideoStreamCaptureFromCamera extends VideoStreamCapture {
   /// {@macro read_current_data}
   @override
   Future<void> _readCurrentDataAsyn() async {
-    // 在 mobile 端，startImageStream 已经将新数据直接存入 _curFrameData
-    // 所以这里不需要额外的异步读取操作
-    // _fetchCurrentData 逻辑会检查 _curFrameData.isNewData 来决定是否返回数据
-    // 并触发下一次的数据读取（通过 startImageStream 的回调）
+    // On mobile, startImageStream has already stored new data directly into _curFrameData
+    // So no additional asynchronous read operation is needed here
+    // _fetchCurrentData logic will check _curFrameData.isNewData to decide whether to return data
+    // And trigger the next data read (via startImageStream callback)
     return;
   }
 
@@ -126,47 +156,4 @@ class VideoStreamCaptureFromCamera extends VideoStreamCapture {
       return false;
     }
   }
-
-// TODO: 如果需要 YUV 到 RGB 转换，可以在这里添加辅助函数
-// 例如，使用 `image` 库
-/*
-  img.Image? convertYUV420toRGBA(CameraImage image) {
-    // 这是一个简化示例，实际转换可能更复杂，取决于具体的 YUV 格式
-    // 并且需要处理 planeStride 和 pixelStride
-    final int width = image.width;
-    final int height = image.height;
-
-    final img.Image rgbImage = img.Image(width: width, height: height);
-
-    final Uint8List yPlane = image.planes[0].bytes;
-    final Uint8List uPlane = image.planes[1].bytes;
-    final Uint8List vPlane = image.planes[2].bytes;
-
-    // 假设是 YUV420_888 格式
-    // 这是一个非常简化的转换逻辑，实际应用中可能需要更精确的 YUV 到 RGB 转换算法
-    for (int y = 0; y < height; y++) {
-      for (int x = 0; x < width; x++) {
-        final int Y = yPlane[y * image.planes[0].bytesPerRow + x];
-        final int U = uPlane[(y ~/ 2) * image.planes[1].bytesPerRow + (x ~/ 2)];
-        final int V = vPlane[(y ~/ 2) * image.planes[2].bytesPerRow + (x ~/ 2)];
-
-        // YUV to RGB conversion formula (simplified)
-        int C = Y - 16;
-        int D = U - 128;
-        int E = V - 128;
-
-        int R = (298 * C + 409 * E + 128) >> 8;
-        int G = (298 * C - 100 * D - 208 * E + 128) >> 8;
-        int B = (298 * C + 516 * D + 128) >> 8;
-
-        R = R.clamp(0, 255);
-        G = G.clamp(0, 255);
-        B = B.clamp(0, 255);
-
-        rgbImage.setPixelRgb(x, y, R, G, B);
-      }
-    }
-    return rgbImage;
-  }
-  */
 }
